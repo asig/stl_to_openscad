@@ -34,10 +34,11 @@ import (
 )
 
 var (
-	inputFilenameFlag  = flag.String("input", "", "The input file to read from. If not set, the program reads from stdin")
-	outputFilenameFlag = flag.String("output", "", "The output file to write to. If not set, the program writes to stdout")
-	moduleNameFlag     = flag.String("module", "", "Name of the generated OpenSCAD module")
-	centerFlag         = flag.Bool("center", true, "If true, the shape is centered in the (x,y) plane")
+	inputFilenameFlag    = flag.String("input", "", "The input file to read from. If not set, the program reads from stdin")
+	outputFilenameFlag   = flag.String("output", "", "The output file to write to. If not set, the program writes to stdout")
+	moduleNameFlag       = flag.String("module", "", "Name of the generated OpenSCAD module")
+	centerFlag           = flag.Bool("center", true, "If true, the shape is centered in the (x,y) plane")
+	singlePolyhedronFlag = flag.Bool("single_polyhedron", true, "Whether a single polyhedron() call should be used, or one per facet")
 
 	moduleName string
 )
@@ -127,7 +128,7 @@ func readFacet(scanner *bufio.Scanner) polygon {
 	return poly
 }
 
-func readAscii(r *bufio.Reader) polygons {
+func readASCII(r *bufio.Reader) polygons {
 	var polygons polygons
 
 	scanner := bufio.NewScanner(r)
@@ -250,7 +251,7 @@ func combineStrings(strings []string, count int, separator string) []string {
 
 	curLine := ""
 	i := 0
-	for idx, _ := range strings {
+	for idx := range strings {
 		part := strings[idx]
 		if idx < len(strings)-1 {
 			part = part + separator
@@ -268,7 +269,7 @@ func combineStrings(strings []string, count int, separator string) []string {
 	return lines
 }
 
-func writeOpenScad(w *bufio.Writer, polygons polygons) {
+func writeSinglePolyhedron(w *bufio.Writer, polygons polygons) {
 	var (
 		points []string
 		faces  []string
@@ -282,7 +283,6 @@ func writeOpenScad(w *bufio.Writer, polygons polygons) {
 		ofs = ofs + len(p.vertices)
 	}
 
-	fmt.Fprintf(w, "module %s() {\n", moduleName)
 	fmt.Fprintf(w, "  polyhedron(\n")
 	fmt.Fprintf(w, "    points=[\n")
 	for _, l := range combineStrings(points, 3, ", ") {
@@ -295,6 +295,29 @@ func writeOpenScad(w *bufio.Writer, polygons polygons) {
 	}
 	fmt.Fprintf(w, "    ]\n")
 	fmt.Fprintf(w, "  );\n")
+}
+
+func writeMultiPolyhedron(w *bufio.Writer, polygons polygons) {
+	for _, p := range polygons {
+		var points []string
+		for _, v := range p.vertices {
+			points = append(points, pointToOpenScad(v))
+		}
+		var indices []string
+		for i := 0; i < len(p.vertices); i++ {
+			indices = append(indices, strconv.Itoa(i))
+		}
+		fmt.Fprintf(w, "  polyhedron(points=[%s],faces=[[%s]]);\n", strings.Join(points, ", "), strings.Join(indices, ", "))
+	}
+}
+
+func writeOpenScad(w *bufio.Writer, polygons polygons) {
+	fmt.Fprintf(w, "module %s() {\n", moduleName)
+	if *singlePolyhedronFlag {
+		writeSinglePolyhedron(w, polygons)
+	} else {
+		writeMultiPolyhedron(w, polygons)
+	}
 	fmt.Fprintf(w, "}\n")
 	fmt.Fprintf(w, "%s();\n", moduleName)
 	w.Flush()
@@ -311,8 +334,8 @@ func postProcess(polygons polygons) {
 		-min.y - (max.y-min.y)/2,
 		-min.z,
 	}
-	for i, _ := range polygons {
-		for j, _ := range polygons[i].vertices {
+	for i := range polygons {
+		for j := range polygons[i].vertices {
 			polygons[i].vertices[j] = polygons[i].vertices[j].add(delta)
 		}
 	}
@@ -332,7 +355,7 @@ func main() {
 	buf, _ := input.Peek(6)
 	if string(buf) == "solid " {
 		log.Print("Reading ASCII file")
-		polygons = readAscii(input)
+		polygons = readASCII(input)
 	} else {
 		log.Print("Reading Binary file")
 		polygons = readBinary(input)
